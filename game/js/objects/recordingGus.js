@@ -12,6 +12,7 @@ const EPSILON = require( "../consts" ).EPSILON;
 const TAU = require( "../consts" ).TAU;
 
 const FRAMES_PER_COURSE_CORRECTION = 1;
+const FREQUENCY_OF_COURSE_CORRECTION = 8; //this simply specifies how frequently a record gets decompressed, more is smoother, yustynn will adapt course correction to find the most recent correction and apply it
 
 class RecordingGus extends Gus {
   constructor(x, y) {
@@ -35,29 +36,124 @@ class RecordingGus extends Gus {
       this.inputRecords = this.inputRecords.reverse();
       this.courseCorrectionRecords = this.courseCorrectionRecords.reverse();
 
+
+  		this.compressRecord();
+  		console.log(this.compressed);
+  		console.table(this.decompressRecord());
+
       this.recordsFinalized = true;
     }
   }
 
-  getCourseCorrectionRecords() {
-    return this.courseCorrectionRecords;
-  }
+  recordCourseCorrection() {
+		//when gus is rotating, he is not moving, if he is not moving, replayed gus can't be out of sync
+		if(!this.rotating) {
+			this.courseCorrectionRecords.push({
+				x: this.sprite.x,
+				y: this.sprite.y,
+				f: this.isTouching('down'),
+        r: this.rotation,
+			  time: this.getTime()
+			})
+		}
+	}
 
-  getInputRecords() {
-    return this.inputRecords;
+	compressRecord() {
+		this.compressed = [];
+		var ccr = this.courseCorrectionRecords.reverse();
+		var lastFallingFrame = 0;
+		for(var i = 0; i < ccr.length-1; i++) {
+			if(ccr[i+1].x > ccr[i].x && ccr[i+1].y == ccr[i+1].y && ccr[i].f) {
+				//moving right and not falling
+				var j = i+1;
+				while(j < ccr.length && ccr[j-1].x < ccr[j].x && ccr[i+1].y == ccr[i+1].y && ccr[j++].f) {};
+				this.compressed.push({
+					start: ccr[i],
+					end: ccr[j-1]
+				});
+				i=j;
+			}
+			else if(ccr[i+1].x < ccr[i].x && ccr[i+1].y == ccr[i+1].y && ccr[i].f) {
+				//moving left and not falling
+				var j = i+1;
+				while(j < ccr.length && ccr[j-1].x > ccr[j].x && ccr[i+1].y == ccr[i+1].y && ccr[j++].f) {};
+				this.compressed.push({
+					start: ccr[i],
+					end: ccr[j-1]
+				});
+				i=j;
+			}
+			else if(ccr[i+1].y < ccr[i].y && ccr[i+1].x == ccr[i+1].x && ccr[i].f) {
+				//moving down and not falling
+				var j = i+1;
+				while(j < ccr.length && ccr[j-1].y > ccr[j].y && ccr[i+1].x == ccr[i+1].x && ccr[j++].f) {};
+				this.compressed.push({
+					start: ccr[i],
+					end: ccr[j-1]
+				});
+				i=j;
+			}
+			else if(ccr[i+1].y > ccr[i].y && ccr[i+1].x == ccr[i+1].x && ccr[i].f) {
+				//moving up and not falling
+				var j = i+1;
+				while(j < ccr.length && ccr[j-1].y < ccr[j].y && ccr[i+1].x == ccr[i+1].x && ccr[j++].f) {};
+				this.compressed.push({
+					start: ccr[i],
+					end: ccr[j-1]
+				});
+				i=j;
+			}
+			else if(ccr[i+1].y == ccr[i].y && ccr[i+1].x == ccr[i+1].x && ccr[i].f) {
+				//stationary
+				var j = i+1;
+				while(j < ccr.length && ccr[j-1].y == ccr[j].y && ccr[i+1].x == ccr[i+1].x && ccr[j++].f) {};
+				this.compressed.push({
+					start: ccr[i],
+					end: ccr[j-1]
+				});
+				i=j;
+			}
+			else {
+				//gus is falling
+				if(i - lastFallingFrame >= 10) {
+					this.compressed.push({
+						start: ccr[i],
+						end: ccr[i]
+					});
+					lastFallingFrame = i;
+				}
+			}
+		}
+	}
+
+	decompressRecord() {
+		var comp = this.compressed;
+		this.decomp = [];
+		comp.forEach((pair) => {
+			if(pair.start.time === pair.end.time) this.decomp.push(pair.start);
+			else {
+				var xRange = pair.end.x - pair.start.x;
+				var yRange = pair.end.y - pair.start.y;
+				var frames = Math.ceil((pair.end.time - pair.start.time) / FREQUENCY_OF_COURSE_CORRECTION);
+				for(var i = 0; i <= frames; i++) {
+					this.decomp.push({
+						f: true,
+						time: pair.start.time + i * FREQUENCY_OF_COURSE_CORRECTION,
+						x: pair.start.x + (i / frames) * xRange,
+						y: pair.start.y + (i / frames) * yRange
+					});
+				}
+			}
+		});
+		return this.decomp;
+	}
+
+  getTime() {
+    return game.time.now - this.spawnTime;
   }
 
   timeSinceSpawn() {
     return game.time.now - this.spawnTime;
-  }
-
-  recordCourseCorrection() {
-    if (this.recordsFinalized || this.isDead) return;
-    this.courseCorrectionRecords.push({
-      x: this.sprite.x,
-      y: this.sprite.y,
-      time: this.timeSinceSpawn()
-    })
   }
 
   recordInput(win) {
@@ -124,9 +220,10 @@ class RecordingGus extends Gus {
 
   update() {
     this.recordInput();
+    this.recordCourseCorrection();
 
     if (this.framesSinceCourseCorrectionRecord === FRAMES_PER_COURSE_CORRECTION) {
-      this.recordCourseCorrection();
+      // this.recordCourseCorrection();
       this.framesSinceCourseCorrectionRecord = 0;
     } else {
       this.framesSinceCourseCorrectionRecord++;

@@ -255,7 +255,7 @@ function initGameState() {
         // hacky solution. On win -> 'R', checkRestart gets called twice. Dunno why. David?
         if ( !inputRecords || gus.timeSinceSpawn() > 1000 ) {
           inputRecords = gus.inputRecords;
-          courseCorrectionRecords = gus.courseCorrectionRecords;
+          courseCorrectionRecords = gus.compressed;
         }
 
         game.ghostMode = true;
@@ -269,6 +269,8 @@ function initGameState() {
         // this is ridiculous (and only applies to Win -> 'R'). Restart fn for whatever reason gets called twice, resulting in loss of inputRecords's first record. This forces movement in whatever initial direction Gus goes in since the first record is always the player not doing anything for however long. TEMPORARY SOLUTION: send in copy of array to avoid mutation of shared array.
         ghostGus.setInputRecords( inputRecords.slice() );
         ghostGus.setCourseCorrectionRecords( courseCorrectionRecords.slice() );
+
+        ghostGus.decompressRecord();
         // ghostGus.respawn();
       }
 

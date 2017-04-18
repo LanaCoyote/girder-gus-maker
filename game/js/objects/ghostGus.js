@@ -10,6 +10,8 @@ const COLLISION_GROUPS = require("../consts/collisionGroups");
 const EPSILON = require("../consts").EPSILON;
 const TAU = require("../consts").TAU;
 
+const FREQUENCY_OF_COURSE_CORRECTION = 8;
+
 class GhostGus extends Gus {
   constructor(x, y) {
     super(x, y, false);
@@ -29,12 +31,57 @@ class GhostGus extends Gus {
     console.log('Ghost Gus (a.k.a girder ghost) created.')
   }
 
+  decompressRecord() {
+    const comp = this.courseCorrectionRecords;
+    this.decomp = [];
+
+	comp.forEach((pair, indx) => {
+		if (pair.start.time === pair.end.time) {
+			console.log('decompressing a falling record');
+			if(comp[indx-1].end.time) {
+				console.log('doing fancy math');
+				//this record comes after a previous record, interpolate from previous record to here
+				let xRange = pair.start.x - comp[indx-1].end.x;
+				let yRange = pair.start.y - comp[indx-1].end.y;
+				let frames = Math.ceil((pair.start.time - comp[indx-1].end.time) / FREQUENCY_OF_COURSE_CORRECTION);
+				for (let i = 0; i <= frames; i++) {
+					console.log('adding a frame: ', i);
+					this.decomp.push({
+						f: false,
+						time: comp[indx-1].end.time + i * FREQUENCY_OF_COURSE_CORRECTION,
+						x: comp[indx-1].end.x + (i / frames) * xRange,
+						y: comp[indx-1].end.y + (i / frames) * yRange,
+						r: pair.start.r
+					});
+				}
+			} else {
+				console.log('falling without a previous record');
+				this.decomp.push(pair.start);
+			}
+		}
+		else {
+			let xRange = pair.end.x - pair.start.x;
+			let yRange = pair.end.y - pair.start.y;
+			let frames = Math.ceil((pair.end.time - pair.start.time) / FREQUENCY_OF_COURSE_CORRECTION);
+			for (let i = 0; i <= frames; i++) {
+				this.decomp.push({
+					f: true,
+					time: pair.start.time + i * FREQUENCY_OF_COURSE_CORRECTION,
+					x: pair.start.x + (i / frames) * xRange,
+					y: pair.start.y + (i / frames) * yRange,
+					r: pair.start.r
+				});
+			}
+		}
+	});
+
+	this.decomp = this.decomp.reverse();
+	console.log(this.courseCorrectionRecords);
+    console.table(this.decomp)
+  }
+
   setCourseCorrectionRecords(courseCorrectionRecords) {
     this.courseCorrectionRecords = courseCorrectionRecords;
-
-    if (this.courseCorrectionRecords.length) {
-      this.currentCourseCorrectionRecord = this.courseCorrectionRecords.pop();
-    }
   }
 
   setInputRecords(inputRecords) {
@@ -55,18 +102,22 @@ class GhostGus extends Gus {
   }
 
   correctCourse() {
+
+    if (this.isScrewed) return;
+	if (this.rotating) return;
+
+    const courseCorrection = this.getClosestCourseCorrection();
+
+    if (!courseCorrection) return;
+
     if (this.isScrewed) return;
 
-    if (this.currentCourseCorrectionRecord) {
-      this.sprite.body.x = this.currentCourseCorrectionRecord.x;
-      this.sprite.body.y = this.currentCourseCorrectionRecord.y;
-    }
+    this.sprite.body.x = courseCorrection.x;
+    this.sprite.body.y = courseCorrection.y;
+    this.rotation = courseCorrection.r;
 
-    if (this.courseCorrectionRecords.length) {
-      this.currentCourseCorrectionRecord = this.courseCorrectionRecords.pop();
-    }
-    else {
-      var respawnBurst = new ParticleBurst( this.sprite.x, this.sprite.y, "GusHead", {
+    if (!courseCorrection) {
+      var respawnBurst = new ParticleBurst(this.sprite.x, this.sprite.y, "GusHead", {
         lifetime: 3000,
         count: 14,
         scaleMin: 0.2,
@@ -80,23 +131,25 @@ class GhostGus extends Gus {
     }
   }
 
-    // diff from Gus's doom: doesn't unlock the dolly
-    doom() {
+  // diff from Gus's doom: doesn't unlock the dolly
+  doom() {
 
-      this.sprite.body.clearCollision();
-      this.sprite.body.fixedRotation = false;
+    this.sprite.body.clearCollision();
+    this.sprite.body.fixedRotation = false;
 
-      this.sprite.body.velocity.x = Math.sin(this.rotation) * 250;
-      this.sprite.body.velocity.y = Math.cos(this.rotation) * -250;
+    this.sprite.body.velocity.x = Math.sin(this.rotation) * 250;
+    this.sprite.body.velocity.y = Math.cos(this.rotation) * -250;
 
-      this.sprite.body.angularVelocity = 30;
-      //this.sprite.body.rotateRight( 360 );
+    this.sprite.body.angularVelocity = 30;
+    //this.sprite.body.rotateRight( 360 );
 
-    }
+  }
 
   destroy() {
     console.log('GHOST GUS IS BANISHED')
-    this.marker.girdersPlaced.forEach( ( girder ) => { girder.sprite.destroy() });
+    this.marker.girdersPlaced.forEach((girder) => {
+      girder.sprite.destroy()
+    });
     this.marker.sprite.destroy();
 
     this.sprite.destroy();
@@ -145,6 +198,31 @@ class GhostGus extends Gus {
     return game.time.now - this.spawnTime;
   }
 
+  getClosestCourseCorrection() {
+    const ccr = this.decomp;
+	if(ccr.length < 1) return null;
+
+    let currentRecord = ccr[ccr.length - 1];
+
+	try {
+		while (currentRecord.time <= this.getTime()) {
+			currentRecord = ccr.pop();
+		}
+	} catch (e) {
+		console.log(ccr);
+		console.log(e);
+		console.log('\n\n\n\nThere was an error\n\n\n\n');
+	}
+
+	try {
+		return (currentRecord.time - this.getTime() <= 10) ? currentRecord : null;
+	} catch(e) {
+		console.error(e);
+		return null;
+	}
+
+  }
+
   isRecordExpired() {
     const currentTime = this.getTime();
     const currentInputRecordEnd = this.currentInputRecord.endTime;
@@ -164,6 +242,9 @@ class GhostGus extends Gus {
 
   update() {
     if (this.isDestroyed) return;
+
+    this.correctCourse();
+
 
     this.evaluateInputRecord();
 
@@ -217,13 +298,6 @@ class GhostGus extends Gus {
       }
 
     }
-
-
-    // course correction
-    if (this.currentCourseCorrectionRecord && this.getTime() >= this.currentCourseCorrectionRecord.time) {
-      this.correctCourse();
-    }
-
   }
 }
 
